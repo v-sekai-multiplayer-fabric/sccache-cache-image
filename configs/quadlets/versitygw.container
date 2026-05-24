@@ -1,0 +1,21 @@
+[Unit]
+Description=versitygw S3 gateway for sccache (filesystem-backed)
+Documentation=https://github.com/versity/versitygw
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=ghcr.io/versity/versitygw:v1.0.16
+ContainerName=versitygw
+PublishPort=7070:7070
+Volume=/srv/sccache:/data:Z
+EnvironmentFile=/etc/versitygw/env
+Exec=versitygw --access %S{VERSITYGW_ACCESS} --secret %S{VERSITYGW_SECRET} --port :7070 posix /data
+
+[Service]
+Restart=always
+RestartSec=5
+TimeoutStartSec=900
+
+[Install]
+WantedBy=multi-user.target default.target
