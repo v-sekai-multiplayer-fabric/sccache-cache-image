@@ -72,6 +72,10 @@ build {
 
   # Quadlet files land in /etc/containers/systemd/ so podman's systemd
   # generator picks them up at boot. install.sh moves them into place.
+  provisioner "shell" {
+    inline = ["mkdir -p /tmp/quadlets"]
+  }
+
   provisioner "file" {
     source      = "../configs/quadlets/"
     destination = "/tmp/quadlets/"
