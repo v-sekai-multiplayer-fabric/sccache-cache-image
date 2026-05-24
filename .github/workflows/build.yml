@@ -3,9 +3,15 @@ name: build
 on:
   push:
     branches: [main]
+    tags: ['v*']
   workflow_dispatch:
+    inputs:
+      parent_version:
+        description: linux-base-image release tag to layer on. Empty uses the default in build.pkr.hcl.
+        required: false
+        type: string
   schedule:
-    # Weekly rebuild to pick up upstream AlmaLinux + dnf updates.
+    # Weekly rebuild to pick up upstream + dnf updates.
     - cron: "0 6 * * 1"
 
 permissions:
@@ -22,7 +28,8 @@ jobs:
       - name: Install qemu + packer
         run: |
           sudo apt-get update
-          sudo apt-get install -y qemu-system-x86 qemu-utils ovmf
+          # xorriso is what packer's qemu builder uses to create the cidata ISO.
+          sudo apt-get install -y qemu-system-x86 qemu-utils ovmf xorriso
           curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
           echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
           sudo apt-get update && sudo apt-get install -y packer
@@ -45,11 +52,22 @@ jobs:
         working-directory: packer
         env:
           PKR_VAR_version: ${{ github.ref_name }}
-        run: sudo -E packer build build.pkr.hcl
+          PARENT_VERSION: ${{ inputs.parent_version }}
+        run: |
+          ARGS=""
+          if [ -n "$PARENT_VERSION" ]; then
+            ARGS="-var source_image_url=https://github.com/v-sekai-multiplayer-fabric/linux-base-image/releases/download/${PARENT_VERSION}/linux-base-image.qcow2"
+            ARGS="$ARGS -var source_image_checksum=file:https://github.com/v-sekai-multiplayer-fabric/linux-base-image/releases/download/${PARENT_VERSION}/linux-base-image.qcow2.sha512"
+          fi
+          sudo -E packer build $ARGS build.pkr.hcl
 
       - name: Hash output
         working-directory: output
         run: |
+          # packer ran under sudo, so the qcow2 is root-owned. Chown
+          # back to the runner so the subsequent sha512sum + upload
+          # steps can write here without sudo.
+          sudo chown -R "$USER:$USER" .
           sha512sum sccache-cache-image.qcow2 > sccache-cache-image.qcow2.sha512
           ls -lh
 
