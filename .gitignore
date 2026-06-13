@@ -1,9 +1,1 @@
-output/
-*.qcow2
-*.qcow2.sha512
-packer/.packer*/
-packer/cidata/user-data
-packer/cidata/meta-data
-packer/cidata/ssh_key
-packer/cidata/ssh_key.pub
 crash.log

@@ -1,76 +1,56 @@
-# sccache-cache-image
+# sccache-cache-quadlet
 
-V-Sekai compile cache VM image: versitygw serving an S3 endpoint for
-[sccache](https://github.com/mozilla/sccache) to store + serve SCons-built
-C++ object files for zone-baker, zone-server, godot-cpp, and other
-Godot-engine builds. Run as a podman quadlet on top of `linux-base-image`.
-Built once per release via packer; consumed by the `infra` repo as the
-qcow2 for `harvester_virtualmachine.sccache`.
+Podman [quadlet](https://docs.podman.io/en/latest/markdown/podman-systemd.unit.5.html)
+source for a versitygw S3 endpoint backing
+[sccache](https://github.com/mozilla/sccache) — stores + serves
+SCons-built C++ object files for zone-baker, zone-server, godot-cpp, and
+other Godot-engine builds. Run by systemd on an AlmaLinux host.
 
-Separate from `restic-backup-image` because the workloads have different
-shapes:
+This repo is the source of truth for the unit; it is installed onto a
+host rather than baked into a VM image.
+
+Kept separate from `restic-backup-quadlet` because the workloads differ:
 
 | | sccache | backup |
 |---|---|---|
 | Write cadence | constant (every build) | daily |
 | Read cadence | constant (every CI run) | rare (DR only) |
 | Eviction | LRU, churns | retention, never overwrites |
-| Sensitivity | low (compile artifacts are reproducible) | high (only DR copy) |
+| Sensitivity | low (reproducible artifacts) | high (only DR copy) |
 
-Sharing one versitygw between them would let cache write pressure
-evict backup capacity headroom, and an outage in one would take the
-other down. Two VMs, two PVCs, two LB IPs.
+## Layout
 
-## What's in the image
+- `quadlets/versitygw.container` — versitygw against `/srv/sccache`,
+  publishes `7070`. Tag pinned here.
+- `install.sh` — installs the unit, creates `/srv/sccache` and the
+  owning `versitygw` user, pre-pulls the image, reloads systemd.
 
-Inherits everything from `linux-base-image`, and adds:
+## Install
 
-- `/etc/containers/systemd/versitygw.container` — podman quadlet
-  running versitygw against `/srv/sccache`
-- `/srv/sccache` mountpoint (infra-side cloud-init binds a Harvester
-  PVC here at first boot)
-- `versitygw` system user owning the data directory
+```sh
+sudo ./install.sh
+# write /etc/versitygw/env (see below)
+sudo systemctl start versitygw.service
+```
 
-versitygw image pre-pulled into podman's local store. Tag pinned in
-the quadlet; bumping is a deliberate edit + re-bake.
+## Configuration (per-deployment, NOT in this repo)
 
-Service env file (`/etc/versitygw/env`) is not baked. The infra side
-writes it at first boot with the sccache-specific access/secret pair
-so this image is reusable across deployments.
+- `/etc/versitygw/env` — `VERSITYGW_ACCESS`, `VERSITYGW_SECRET`.
 
 ## Client config
-
-zone-baker / zone-server / godot CI configure sccache via env vars:
 
 ```sh
 export SCCACHE_BUCKET=sccache
 export SCCACHE_REGION=us-east-1
-export SCCACHE_ENDPOINT=http://<sccache-lb-ip>:7070
-export AWS_ACCESS_KEY_ID=<from infra tofu.tfvars>
-export AWS_SECRET_ACCESS_KEY=<from infra tofu.tfvars>
+export SCCACHE_ENDPOINT=http://<sccache-host-ip>:7070
+export AWS_ACCESS_KEY_ID=<access>
+export AWS_SECRET_ACCESS_KEY=<secret>
 sccache --start-server
 ```
 
 Then SCons picks it up via `CC="sccache gcc"` / `CXX="sccache g++"`.
 
-## Build
+## CI
 
-CI on push to main + weekly schedule. Local:
-
-```sh
-cd packer
-bash scripts/prepare-cidata.sh
-packer init build.pkr.hcl
-packer build build.pkr.hcl
-ls ../output/
-```
-
-## Inheritance
-
-Pin the parent version explicitly in `build.pkr.hcl`:
-
-```hcl
-variable "source_image_url" {
-  default = "https://github.com/v-sekai-multiplayer-fabric/linux-base-image/releases/download/v0.1.0/linux-base-image.qcow2"
-}
-```
+`.github/workflows/lint.yml` validates the unit via podman's systemd
+generator on every push/PR.

@@ -1,0 +1,33 @@
+name: lint-quadlets
+
+# Validate the podman quadlet source units in this repo by running them
+# through podman's systemd generator in dry-run mode. The generator
+# exits non-zero and prints diagnostics if any unit is malformed, so a
+# clean run means every *.container / *.timer here would be accepted by
+# systemd on a host.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  quadlet-dryrun:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install podman
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman
+
+      - name: Generate units (dry run)
+        env:
+          QUADLET_UNIT_DIRS: ${{ github.workspace }}/quadlets
+        run: |
+          gen=/usr/lib/systemd/system-generators/podman-system-generator
+          [ -x "$gen" ] || gen=/usr/libexec/podman/quadlet
+          echo "Using generator: $gen"
+          "$gen" --dryrun -v
